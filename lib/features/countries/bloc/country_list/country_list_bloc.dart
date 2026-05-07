@@ -1,7 +1,7 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
-import 'package:worldscope/features/countries/data/models/country_summary_model.dart';
-import 'package:worldscope/features/countries/data/services/country_service.dart';
+import 'package:worldscope/data/countries/models/country_summary_model.dart';
+import 'package:worldscope/data/countries/services/country_service.dart';
 
 part 'country_list_event.dart';
 part 'country_list_state.dart';
