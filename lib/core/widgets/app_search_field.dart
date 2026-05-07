@@ -5,12 +5,18 @@ class AppSearchField extends StatefulWidget {
   const AppSearchField({
     super.key,
     required this.onChanged,
+    this.onTap,
+    this.onFieldSubmitted,
+    this.controller,
     this.hintText = 'Search',
     this.initialValue = '',
     this.debounceDuration = const Duration(milliseconds: 350),
   });
 
   final ValueChanged<String> onChanged;
+  final VoidCallback? onTap;
+  final ValueChanged<String>? onFieldSubmitted;
+  final TextEditingController? controller;
   final String hintText;
   final String initialValue;
   final Duration debounceDuration;
@@ -21,18 +27,23 @@ class AppSearchField extends StatefulWidget {
 
 class _AppSearchFieldState extends State<AppSearchField> {
   late final TextEditingController _controller;
+  late final bool _ownsController;
   late final Debouncer _debouncer;
 
   @override
   void initState() {
     super.initState();
-    _controller = TextEditingController(text: widget.initialValue);
+    _ownsController = widget.controller == null;
+    _controller =
+        widget.controller ?? TextEditingController(text: widget.initialValue);
     _debouncer = Debouncer(delay: widget.debounceDuration);
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    if (_ownsController) {
+      _controller.dispose();
+    }
     _debouncer.dispose();
     super.dispose();
   }
@@ -46,7 +57,9 @@ class _AppSearchFieldState extends State<AppSearchField> {
   Widget build(BuildContext context) {
     return TextFormField(
       controller: _controller,
+      onTap: widget.onTap,
       onChanged: _handleChanged,
+      onFieldSubmitted: widget.onFieldSubmitted,
       textInputAction: TextInputAction.search,
       decoration: InputDecoration(
         hintText: widget.hintText,
