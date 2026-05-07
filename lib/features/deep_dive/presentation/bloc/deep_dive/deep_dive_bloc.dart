@@ -59,7 +59,7 @@ class DeepDiveBloc extends Bloc<DeepDiveEvent, DeepDiveState> {
           .then(
             (result) => result.fold(
               (failure) => newsError = failure.message,
-              (articles) => newsError = 'Testing error',
+              (articles) => news = articles,
             ),
           ),
     ], eagerError: false);
