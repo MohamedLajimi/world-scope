@@ -1,9 +1,9 @@
 import 'package:dio/dio.dart';
 import 'package:fpdart/fpdart.dart';
 import 'package:worldscope/core/network/dio_client.dart';
-import 'package:worldscope/features/countries/data/failures/country_failure.dart';
-import 'package:worldscope/features/countries/data/models/country_detail_model.dart';
-import 'package:worldscope/features/countries/data/models/country_summary_model.dart';
+import 'package:worldscope/data/countries/failures/country_failure.dart';
+import 'package:worldscope/data/countries/models/country_detail_model.dart';
+import 'package:worldscope/data/countries/models/country_summary_model.dart';
 
 class CountryService {
   CountryService({Dio? dio}) : _dio = dio ?? DioClient.instance;
@@ -12,10 +12,10 @@ class CountryService {
   static const String _baseUrl = 'https://restcountries.com/v3.1';
 
   Future<Either<CountryFailure, List<CountrySummaryModel>>>
-  fetchAllCountries() async {
+      fetchAllCountries() async {
     try {
       final response = await _dio.get<List<dynamic>>(
-        '$_baseUrl/all?fields=name,flags,cca2,cca3',
+        '$_baseUrl/all?fields=name,flags,cca2,cca3,capital',
       );
 
       final data = response.data;
@@ -23,16 +23,10 @@ class CountryService {
         return left(const ParsingFailure());
       }
 
-      final countries =
-          data
-              .map(
-                (json) =>
-                    CountrySummaryModel.fromJson(json as Map<String, dynamic>),
-              )
-              .toList()
-            ..sort(
-              (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
-            );
+      final countries = data
+          .map((json) => CountrySummaryModel.fromJson(json as Map<String, dynamic>))
+          .toList()
+        ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
 
       return right(countries);
     } on DioException catch (error) {
@@ -52,9 +46,7 @@ class CountryService {
     }
 
     final filtered = countries
-        .where(
-          (country) => country.name.toLowerCase().contains(normalizedQuery),
-        )
+        .where((country) => country.name.toLowerCase().contains(normalizedQuery))
         .toList();
 
     return right(filtered);
