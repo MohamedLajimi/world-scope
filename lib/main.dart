@@ -20,7 +20,8 @@ class WorldScopeApp extends StatelessWidget {
     return MaterialApp.router(
       title: 'WorldScope',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.light,
+      themeMode: ThemeMode.dark,
+      darkTheme: AppTheme.dark,
       routerConfig: AppRouter.router,
     );
   }
