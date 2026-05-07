@@ -1,0 +1,683 @@
+# WorldScope — Cursor Agent Rules & Build Plan
+> Flutter Technical Assessment | 3 Levels | Target: ~3 hours
+> Read this file fully before writing any code. Follow phases in order.
+
+---
+
+## Project Overview
+
+Build **WorldScope**, a multi-feature Flutter mobile app (Android) consuming 4 public REST APIs across 3 levels. Code must be clean, explainable, and working. Commit after every phase.
+
+**APIs summary:**
+| API | Key? | Used in |
+|---|---|---|
+| restcountries.com/v3.1 | No | L1 + L3 |
+| open-meteo.com | No | L2 + L3 |
+| api.opencagedata.com | Yes — inject from env | L2 |
+| newsapi.org | Yes — inject from env | L3 |
+
+---
+
+## Ground Rules (Never Break These)
+
+- Flutter + Dart only. No low-code tools.
+- Must run on Android. Test on emulator frequently.
+- No business logic inside `build()` methods — ever.
+- All API calls use `async/await` with proper error handling.
+- Every field from the API must be null-safe with a readable fallback string.
+- Commit message format: `level1-phase2: data layer` etc.
+- At least 3 service classes by Level 3: `CountryService`, `WeatherService`, `NewsService`.
+
+---
+
+## Folder Structure (Set Up in Phase 0)
+
+```
+lib/
+  main.dart
+  models/
+    country_summary.dart
+    country_detail.dart
+    weather_model.dart
+    news_article.dart
+  services/
+    country_service.dart
+    weather_service.dart
+    news_service.dart
+  screens/
+    country_list_screen.dart       ← Level 1
+    country_detail_screen.dart     ← Level 1
+    weather_screen.dart            ← Level 2
+    deep_dive_screen.dart          ← Level 3
+  widgets/
+    country_tile.dart
+    weather_card.dart
+    news_tile.dart
+    error_widget.dart
+    loading_widget.dart
+  utils/
+    wmo_codes.dart                 ← WMO code → label map
+    number_formatter.dart
+  theme/
+    app_theme.dart                 ← Level 3 consistent theme
+```
+
+---
+
+## pubspec.yaml Dependencies
+
+```yaml
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.0
+  shared_preferences: ^2.2.2
+  url_launcher: ^6.2.4
+  intl: ^0.19.0
+
+# For Level 3 WebView (add when needed):
+  webview_flutter: ^4.7.0
+```
+
+Run `flutter pub get` after editing pubspec.
+
+---
+
+---
+
+# LEVEL 1 — Country Info Browser
+
+**Target time: 50 minutes**
+**API:** `https://restcountries.com/v3.1`
+
+---
+
+## L1 Phase 0 — Project Bootstrap (5 min)
+
+1. `flutter create worldscope`
+2. Replace `pubspec.yaml` dependencies (see above, http only for now)
+3. Create all folders under `lib/` listed in the structure above (empty files ok)
+4. In `main.dart`: `home: CountryListScreen()`
+5. **Commit:** `init: project setup and folder structure`
+
+---
+
+## L1 Phase 1 — Models (10 min)
+
+### `lib/models/country_summary.dart`
+Fields: `String name`, `String flagUrl`, `String cca3`
+
+JSON mapping:
+- `name` → `json['name']['common']`
+- `flagUrl` → `json['flags']['png']`
+- `cca3` → `json['cca3']`
+
+All fields: null-safe with `?? ''` fallback.
+
+### `lib/models/country_detail.dart`
+Fields: `String name`, `String flagUrl`, `String capital`, `String currency`, `String currencySymbol`, `String languages`, `int population`
+
+JSON mapping:
+- `capital` → `(json['capital'] as List?)?.first ?? 'N/A'`
+- `currency` → first value of `json['currencies']` map → `name` field
+- `currencySymbol` → first value of `json['currencies']` map → `symbol` field
+- `languages` → `(json['languages'] as Map?)?.values.join(', ') ?? 'N/A'`
+- `population` → `json['population'] ?? 0`
+
+**Commit:** `level1-phase1: country models`
+
+---
+
+## L1 Phase 2 — API Service (10 min)
+
+### `lib/services/country_service.dart`
+
+```dart
+class CountryService {
+  static const _base = 'https://restcountries.com/v3.1';
+
+  Future<List<CountrySummary>> fetchAll() async {
+    final uri = Uri.parse('$_base/all?fields=name,flags,cca3');
+    final res = await http.get(uri);
+    if (res.statusCode != 200) throw Exception('Failed to load countries');
+    final List data = jsonDecode(res.body);
+    return data.map((j) => CountrySummary.fromJson(j)).toList()
+      ..sort((a, b) => a.name.compareTo(b.name));
+  }
+
+  Future<CountryDetail> fetchByCode(String code) async {
+    final uri = Uri.parse(
+      '$_base/alpha/$code?fields=name,capital,currencies,languages,population,flags'
+    );
+    final res = await http.get(uri);
+    if (res.statusCode != 200) throw Exception('Country not found');
+    return CountryDetail.fromJson(jsonDecode(res.body));
+  }
+}
+```
+
+Wrap both methods in try/catch — rethrow with a readable message.
+
+**Commit:** `level1-phase2: country service`
+
+---
+
+## L1 Phase 3 — Country List Screen (15 min)
+
+### `lib/screens/country_list_screen.dart` — StatefulWidget
+
+State fields:
+```dart
+List<CountrySummary> _all = [];
+List<CountrySummary> _filtered = [];
+bool _loading = true;
+String? _error;
+final _searchCtrl = TextEditingController();
+```
+
+`initState()`:
+- Call `CountryService().fetchAll()`
+- On success: `_all = result; _filtered = result`
+- On error: `_error = e.toString()`
+- Always: `setState(() => _loading = false)`
+
+Filter method (called from `TextField.onChanged`):
+```dart
+void _filter(String q) {
+  setState(() {
+    _filtered = _all
+      .where((c) => c.name.toLowerCase().contains(q.toLowerCase()))
+      .toList();
+  });
+}
+```
+
+`build()` layout:
+1. If `_loading`: centered `CircularProgressIndicator`
+2. If `_error != null`: centered error text + retry button
+3. Else: `Column` with:
+   - `TextField` (search bar, top)
+   - `Expanded(child: ListView.builder(...))`
+
+### `lib/widgets/country_tile.dart`
+`ListTile`:
+- `leading`: `Image.network(flagUrl, width: 48, height: 32, fit: BoxFit.cover, errorBuilder: (_, __, ___) => Icon(Icons.flag))`
+- `title`: `Text(name)`
+- `onTap`: `Navigator.push(context, MaterialPageRoute(builder: (_) => CountryDetailScreen(cca3: country.cca3)))`
+
+**Commit:** `level1-phase3: country list screen`
+
+---
+
+## L1 Phase 4 — Country Detail Screen (10 min)
+
+### `lib/screens/country_detail_screen.dart` — StatefulWidget
+
+Constructor: `final String cca3`
+
+State: `CountryDetail? _detail`, `bool _loading = true`, `String? _error`
+
+`initState()`: call `CountryService().fetchByCode(cca3)` same pattern as above.
+
+`build()` layout (show spinner / error / data):
+```
+- Image.network(flagUrl, width: double.infinity, height: 200, fit: BoxFit.cover)
+- Padding with Column:
+  - Text(name) — headline style
+  - _infoRow('Capital', detail.capital)
+  - _infoRow('Currency', '${detail.currency} (${detail.currencySymbol})')
+  - _infoRow('Languages', detail.languages)
+  - _infoRow('Population', NumberFormat.compact().format(detail.population))
+```
+
+Helper: `_infoRow(String label, String value)` → `Row` with bold label + value.
+
+**Commit:** `level1-phase4: country detail screen`
+
+---
+
+## L1 Phase 5 — Test & Fix (5 min)
+
+- Run on Android emulator
+- Disable WiFi → verify error widget appears (not crash)
+- Search 'fra' → France appears
+- Tap France → all 5 fields visible
+
+**Commit:** `level1-done: tested on android`
+
+---
+
+---
+
+# LEVEL 2 — Weather Dashboard
+
+**Target time: 60 minutes**
+**APIs:**
+- OpenCage: `https://api.opencagedata.com/geocode/v1/json?q={city}&key={KEY}`
+- Open-Meteo: `https://api.open-meteo.com/v1/forecast`
+
+---
+
+## L2 Phase 1 — WMO Codes Utility (5 min)
+
+### `lib/utils/wmo_codes.dart`
+
+```dart
+const Map<int, String> wmoLabels = {
+  0: 'Clear sky',
+  1: 'Mainly clear', 2: 'Partly cloudy', 3: 'Overcast',
+  45: 'Fog', 48: 'Icy fog',
+  51: 'Light drizzle', 53: 'Drizzle', 55: 'Heavy drizzle',
+  61: 'Light rain', 63: 'Rain', 65: 'Heavy rain',
+  71: 'Light snow', 73: 'Snow', 75: 'Heavy snow',
+  80: 'Showers', 81: 'Rain showers', 82: 'Violent showers',
+  95: 'Thunderstorm', 96: 'Thunderstorm + hail', 99: 'Heavy thunderstorm',
+};
+
+String wmoLabel(int code) => wmoLabels[code] ?? 'Unknown';
+```
+
+---
+
+## L2 Phase 2 — Weather Model (5 min)
+
+### `lib/models/weather_model.dart`
+
+```dart
+class WeatherModel {
+  final double tempNow;
+  final double windSpeed;
+  final int weatherCode;
+  final List<DayForecast> forecast; // 7 items
+}
+
+class DayForecast {
+  final String date;       // formatted 'Mon 12'
+  final double tempMin;
+  final double tempMax;
+  final int weatherCode;
+}
+```
+
+Parse from Open-Meteo response:
+- `current.temperature_2m`, `current.wind_speed_10m`, `current.weather_code`
+- `daily.time[]`, `daily.temperature_2m_min[]`, `daily.temperature_2m_max[]`, `daily.weather_code[]`
+
+---
+
+## L2 Phase 3 — Weather Service (15 min)
+
+### `lib/services/weather_service.dart`
+
+```dart
+class WeatherService {
+  static const _opencage = 'https://api.opencagedata.com/geocode/v1/json';
+  static const _openmeteo = 'https://api.open-meteo.com/v1/forecast';
+  static const _opencageKey = 'YOUR_KEY_HERE'; // inject via const or .env
+
+  Future<Map<String, double>> geocode(String city) async {
+    final uri = Uri.parse('$_opencage?q=${Uri.encodeComponent(city)}&key=$_opencageKey&limit=1');
+    final res = await http.get(uri);
+    if (res.statusCode != 200) throw Exception('Geocoding failed');
+    final data = jsonDecode(res.body);
+    final results = data['results'] as List?;
+    if (results == null || results.isEmpty) throw Exception('City not found: $city');
+    final geo = results[0]['geometry'];
+    return {'lat': geo['lat'].toDouble(), 'lng': geo['lng'].toDouble()};
+  }
+
+  Future<WeatherModel> fetchWeather(double lat, double lng) async {
+    final uri = Uri.parse(
+      '$_openmeteo?latitude=$lat&longitude=$lng'
+      '&current=temperature_2m,wind_speed_10m,weather_code'
+      '&daily=temperature_2m_max,temperature_2m_min,weather_code'
+      '&timezone=auto&forecast_days=7'
+    );
+    final res = await http.get(uri);
+    if (res.statusCode != 200) throw Exception('Weather fetch failed');
+    return WeatherModel.fromJson(jsonDecode(res.body));
+  }
+
+  // Convenience: chain both calls
+  Future<WeatherModel> getWeatherForCity(String city) async {
+    final coords = await geocode(city);
+    return fetchWeather(coords['lat']!, coords['lng']!);
+  }
+}
+```
+
+---
+
+## L2 Phase 4 — Weather Screen (20 min)
+
+### `lib/screens/weather_screen.dart` — StatefulWidget
+
+State:
+```dart
+WeatherModel? _weather;
+bool _loading = false;
+String? _error;
+final _cityCtrl = TextEditingController();
+String _lastCity = '';
+```
+
+`initState()`: load last city from `SharedPreferences` → if exists, call `_search(lastCity)`
+
+`_search(String city)`:
+```dart
+setState(() { _loading = true; _error = null; });
+try {
+  final w = await WeatherService().getWeatherForCity(city);
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString('last_city', city);
+  setState(() { _weather = w; _lastCity = city; });
+} catch (e) {
+  setState(() { _error = e.toString(); });
+} finally {
+  setState(() { _loading = false; });
+}
+```
+
+`build()` layout:
+1. `TextField` + Search button at top
+2. If `_loading`: `CircularProgressIndicator`
+3. If `_error != null`: error text
+4. Else if `_weather != null`:
+   - **Current weather card**: city name, temp, wind speed, wmoLabel(code)
+   - **7-day forecast**: `SizedBox(height: 140, child: ListView.builder(scrollDirection: Axis.horizontal, ...))`
+
+### `lib/widgets/weather_card.dart`
+Card per `DayForecast`: date, `↑ maxTemp°  ↓ minTemp°`, wmoLabel.
+
+**Commit:** `level2-done: weather dashboard with persistence`
+
+---
+
+## L2 Phase 5 — Test (5 min)
+
+- Search 'Tunis' → correct data
+- Search 'xyznonexistent' → shows "City not found" not crash
+- Hot restart → last city still shows
+- Full app restart → last city reloads from SharedPreferences
+
+---
+
+---
+
+# LEVEL 3 — News + Country Deep-Dive
+
+**Target time: 60 minutes**
+**APIs:** All 4 (REST Countries + OpenCage + Open-Meteo + NewsAPI)
+
+---
+
+## L3 Phase 1 — News Model + Service (10 min)
+
+### `lib/models/news_article.dart`
+Fields: `String title`, `String? description`, `String url`, `String? urlToImage`, `String source`
+
+Parse from `articles[]` array in NewsAPI response.
+
+### `lib/services/news_service.dart`
+
+```dart
+class NewsService {
+  static const _base = 'https://newsapi.org/v2/top-headlines';
+  static const _key = 'YOUR_KEY_HERE';
+
+  Future<List<NewsArticle>> fetchHeadlines(String countryCode2) async {
+    // NewsAPI uses 2-letter codes (ISO 3166-1 alpha-2)
+    final uri = Uri.parse('$_base?country=${countryCode2.toLowerCase()}&pageSize=5&apiKey=$_key');
+    final res = await http.get(uri);
+    if (res.statusCode != 200) throw Exception('News fetch failed');
+    final data = jsonDecode(res.body);
+    final articles = data['articles'] as List? ?? [];
+    return articles.map((a) => NewsArticle.fromJson(a)).toList();
+  }
+}
+```
+
+Note: REST Countries gives `cca2` (2-letter) and `cca3` (3-letter). Use `cca2` for NewsAPI.
+
+Update `CountrySummary` model to also include `cca2` field.
+
+---
+
+## L3 Phase 2 — Deep Dive Screen Shell (10 min)
+
+### `lib/screens/deep_dive_screen.dart` — StatefulWidget
+
+Constructor: `final CountrySummary country`
+
+State:
+```dart
+CountryDetail? _detail;
+WeatherModel? _weather;
+List<NewsArticle> _news = [];
+bool _loading = true;
+Map<String, String?> _errors = {'country': null, 'weather': null, 'news': null};
+```
+
+`initState()` → call `_loadAll()`
+
+**Critical — use `Future.wait` for parallel calls:**
+```dart
+Future<void> _loadAll() async {
+  setState(() => _loading = true);
+  final results = await Future.wait([
+    CountryService().fetchByCode(country.cca3).then((d) => _detail = d).catchError((e) {
+      _errors['country'] = e.toString(); return null;
+    }),
+    _loadWeather(country).catchError((e) {
+      _errors['weather'] = e.toString(); return null;
+    }),
+    NewsService().fetchHeadlines(country.cca2).then((n) => _news = n).catchError((e) {
+      _errors['news'] = e.toString(); return null;
+    }),
+  ], eagerError: false); // eagerError: false → don't stop on first failure
+  setState(() => _loading = false);
+}
+
+Future<void> _loadWeather(CountrySummary c) async {
+  final capital = // get from detail or use country name as fallback
+  final w = await WeatherService().getWeatherForCity(capital);
+  _weather = w;
+}
+```
+
+`build()`: if `_loading` → spinner. Else → `DefaultTabController(length: 3)` with:
+- `TabBar`: Country Info | Weather | News
+- `TabBarView`: 3 tabs
+
+---
+
+## L3 Phase 3 — Three Tabs (15 min)
+
+### Tab 1 — Country Info
+Reuse `CountryDetailScreen` layout content. If `_errors['country'] != null` → show error text. Else show all 5 fields.
+
+### Tab 2 — Weather
+If `_errors['weather'] != null` → show error. Else show current weather + 7-day scroll (reuse `WeatherCard` widget).
+
+### Tab 3 — News
+If `_errors['news'] != null` → show "No news available".
+If `_news.isEmpty` → show "No news available for this country".
+Else: `ListView` of `NewsTile` widgets.
+
+### `lib/widgets/news_tile.dart`
+`ListTile`:
+- `title`: headline text
+- `subtitle`: source name
+- `onTap`: `launchUrl(Uri.parse(article.url))` using `url_launcher`
+
+---
+
+## L3 Phase 4 — Home Screen with Country Selector (10 min)
+
+### Update `main.dart` → home: `HomeScreen`
+
+### `lib/screens/home_screen.dart` (or modify `country_list_screen.dart`)
+
+Keep the Level 1 list. Change `CountryTile.onTap` to:
+```dart
+Navigator.push(context, MaterialPageRoute(
+  builder: (_) => DeepDiveScreen(country: country)
+));
+```
+
+Or add a bottom navigation bar:
+- Tab 0: Country Browser (L1)
+- Tab 1: Weather Search (L2)
+This keeps both levels accessible and shows completeness.
+
+---
+
+## L3 Phase 5 — Theme (5 min)
+
+### `lib/theme/app_theme.dart`
+
+```dart
+final appTheme = ThemeData(
+  colorScheme: ColorScheme.fromSeed(seedColor: Color(0xFF1565C0)),
+  useMaterial3: true,
+  appBarTheme: AppBarTheme(
+    backgroundColor: Color(0xFF1565C0),
+    foregroundColor: Colors.white,
+    elevation: 0,
+  ),
+  cardTheme: CardTheme(
+    elevation: 2,
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+  ),
+  inputDecorationTheme: InputDecorationTheme(
+    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+    contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+  ),
+);
+```
+
+Apply in `main.dart`: `theme: appTheme`
+
+**Commit:** `level3-done: deep dive with parallel api calls and theme`
+
+---
+
+## L3 Phase 6 — Final Test Checklist
+
+- [ ] Select any country → all 3 tabs load
+- [ ] Open DevTools network tab → confirm 3 parallel calls (Future.wait)
+- [ ] Comment out News API key → weather + country tabs still work
+- [ ] Select a country NewsAPI doesn't support (e.g., 'Tuvalu') → "No news available", no crash
+- [ ] Disable WiFi → graceful error on all tabs individually
+- [ ] Theme is consistent across all screens
+
+**Final commit:** `final: worldscope complete all 3 levels`
+
+---
+
+---
+
+## Critical Implementation Notes
+
+### Null safety patterns
+```dart
+// currencies map: {"USD": {"name": "Dollar", "symbol": "$"}}
+final currencies = json['currencies'] as Map<String, dynamic>?;
+final firstCurrency = currencies?.values.first;
+final currencyName = firstCurrency?['name'] ?? 'N/A';
+final currencySymbol = firstCurrency?['symbol'] ?? '';
+
+// languages map: {"eng": "English", "fra": "French"}
+final languages = (json['languages'] as Map?)?.values.join(', ') ?? 'N/A';
+
+// capital is an array
+final capital = (json['capital'] as List?)?.first ?? 'N/A';
+```
+
+### Error widget pattern (reuse everywhere)
+```dart
+// lib/widgets/error_widget.dart
+class AppErrorWidget extends StatelessWidget {
+  final String message;
+  final VoidCallback? onRetry;
+  // ...
+  Widget build(BuildContext context) => Center(
+    child: Column(mainAxisSize: MainAxisSize.min, children: [
+      Icon(Icons.error_outline, size: 48, color: Colors.red),
+      SizedBox(height: 8),
+      Text(message, textAlign: TextAlign.center),
+      if (onRetry != null) TextButton(onPressed: onRetry, child: Text('Retry')),
+    ]),
+  );
+}
+```
+
+### SharedPreferences pattern
+```dart
+// Save
+final prefs = await SharedPreferences.getInstance();
+await prefs.setString('last_city', city);
+
+// Load
+final prefs = await SharedPreferences.getInstance();
+final lastCity = prefs.getString('last_city');
+if (lastCity != null) _search(lastCity);
+```
+
+### Future.wait error isolation (Level 3)
+```dart
+// Use catchError on each future so one failure doesn't cancel others
+await Future.wait([
+  apiCall1().catchError((e) { _errors['key1'] = e.toString(); }),
+  apiCall2().catchError((e) { _errors['key2'] = e.toString(); }),
+  apiCall3().catchError((e) { _errors['key3'] = e.toString(); }),
+], eagerError: false);
+```
+
+### url_launcher setup
+Add to `android/app/src/main/AndroidManifest.xml` inside `<manifest>`:
+```xml
+<queries>
+  <intent>
+    <action android:name="android.intent.action.VIEW" />
+    <data android:scheme="https" />
+  </intent>
+</queries>
+```
+
+---
+
+## Time Budget Summary
+
+| Phase | Target |
+|---|---|
+| L1 bootstrap + models + service | 25 min |
+| L1 list screen + detail screen | 25 min |
+| L2 weather model + service | 20 min |
+| L2 weather screen + persistence | 20 min |
+| L3 news service + deep dive screen | 25 min |
+| L3 home nav + theme + final test | 15 min |
+| **Total** | **~130 min** |
+
+---
+
+## Git Commit History Target
+
+```
+init: project setup and folder structure
+level1-phase1: country models
+level1-phase2: country service
+level1-phase3: country list screen
+level1-phase4: country detail screen
+level1-done: tested on android
+level2-phase1: wmo codes and weather model
+level2-phase2: weather service with geocoding chain
+level2-phase3: weather screen with shared preferences
+level2-done: weather dashboard complete
+level3-phase1: news model and service
+level3-phase2: deep dive screen with future.wait
+level3-phase3: three tabs country weather news
+level3-phase4: home navigation
+level3-phase5: app theme applied
+final: worldscope complete all 3 levels
+```
